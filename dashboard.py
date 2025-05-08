@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 import unicodedata
+import re
 
 # Paleta de cores personalizada
 COLOR_PRIMARY = '#2F473F'  # 50%
@@ -16,6 +17,11 @@ COLOR_LIST = [COLOR_PRIMARY, COLOR_SECONDARY, COLOR_ACCENT]
 def load_data(path):
     # Ler o arquivo Excel
     df = pd.read_excel(path, header=[0,1])  # Usar as duas primeiras linhas como cabeçalho
+    # Preencher valores ausentes na coluna 'Bloco' para garantir filtro correto
+    if 'Bloco' in df.columns:
+        df['Bloco'] = df['Bloco'].fillna(method='ffill')
+    elif ('GERAL', 'Bloco') in df.columns:
+        df[('GERAL', 'Bloco')] = df[('GERAL', 'Bloco')].fillna(method='ffill')
     return df
 
 def normalize(s):
@@ -59,6 +65,10 @@ def extrair_dados(df):
         # Encontrar as colunas relevantes para esta região
         pontuacao_col = (reg, f'{reg} pontuação')
         bloco_col = (reg, 'Pontuação no Bloco ')
+        perc_col = (reg, f'{reg} %')  # coluna de porcentagem
+        
+        # Verificar se a coluna de porcentagem existe
+        perc_col_exists = perc_col in df.columns
         
         # Para cada bloco
         for bloco_idx, (bloco_nome, bloco_titulo, atividades) in enumerate(blocos):
@@ -73,11 +83,21 @@ def extrair_dados(df):
                 # Extrair pontuação do bloco (primeira linha do bloco)
                 pontuacao_bloco = float(df.loc[inicio, bloco_col])
                 
+                # Extrair porcentagem do bloco (primeira linha do bloco)
+                if perc_col_exists:
+                    try:
+                        porcentagem_bloco = float(df.loc[inicio, perc_col])
+                    except Exception:
+                        porcentagem_bloco = None
+                else:
+                    porcentagem_bloco = None
+                
                 dados.append({
                     'Região': reg,
                     'Bloco': bloco_nome,
                     'Título': bloco_titulo,
                     'Pontuação no Bloco': pontuacao_bloco,
+                    'Porcentagem no Bloco': porcentagem_bloco,
                     'Atividades': atividades,
                     'Pontuações': pontuacoes.tolist()
                 })
@@ -315,8 +335,8 @@ df_blocos_filt = df_blocos[filtro]
 if not df_blocos_filt.empty:
     df_blocos_filt = df_blocos_filt.sort_values('Pontuação no Bloco', ascending=False)
 
-# Destaques gerais
-if destaques and not df_blocos_filt.empty:
+# Exibir o painel 'Destaques por Bloco' apenas quando tipo_viz == 'Gráfico de Barras'
+if tipo_viz == 'Gráfico de Barras' and destaques and not df_blocos_filt.empty:
     # Ordenar blocos pelo maior destaque (pontuação) de forma decrescente
     blocos_ordenados = [bloco for bloco in blocos_sel if bloco in destaques]
     destaques_html = "<div style='display: flex; flex-direction: row; justify-content: flex-start; align-items: flex-start; gap: 36px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px;'>"
@@ -346,7 +366,15 @@ if not df_blocos_filt.empty:
             y='Pontuação no Bloco',
             color='Região',
             barmode='group',
-            color_discrete_sequence=COLOR_LIST*3,
+            color_discrete_map={
+                'GLOBAL': '#4A90E2',
+                'Belem/PA': '#2F473F',
+                'São Luis/MA': '#69C655',
+                'Mais Nutrição/CE': '#CC4A23',
+                'PRODAL/MG': '#F5A623',
+                'Curitiba/PR': '#D0021B',
+                'CEAGESP/SP': '#8B572A',
+            },
             text='Pontuação no Bloco',
             title='Pontuação por Bloco e Região'
         )
@@ -363,6 +391,107 @@ if not df_blocos_filt.empty:
             yaxis=dict(color='#2F473F', tickfont=dict(color='#2F473F'))
         )
         st.plotly_chart(fig, use_container_width=True)
+
+        # Exibir o segundo gráfico de barras (Distribuição Percentual das Regiões) apenas se tipo_viz == 'Gráfico de Barras'
+        # Função para obter tipos de percentual, renomeando para exibir sempre '% em relação ao Bloco'
+        def get_percentual_types(df):
+            tipos = set()
+            for col in df.columns:
+                if '%' in str(col[1]):
+                    if str(col[1]).strip().lower() == '% em relação ao bloco 1':
+                        tipos.add('% em relação ao Bloco')
+                    else:
+                        tipos.add(str(col[1]))
+            return sorted(list(tipos))
+
+        percentual_types = get_percentual_types(df)
+        percentual_type = st.selectbox(
+            'Selecione o tipo de percentual para o gráfico:',
+            percentual_types,
+            index=0
+        )
+        percentual_type_real = '% em relação ao Bloco 1' if percentual_type == '% em relação ao Bloco' else percentual_type
+        percentage_cols = [col for col in df.columns if str(col[1]).strip().lower() == percentual_type_real.strip().lower()]
+        col_bloco = None
+        if 'Bloco' in df.columns:
+            col_bloco = 'Bloco'
+        elif ('GERAL', 'Bloco') in df.columns:
+            col_bloco = ('GERAL', 'Bloco')
+
+        # Se o tipo de percentual for geral, desabilitar filtro de bloco e não mostrar no título
+        is_percentual_geral = percentual_type in ['% em relação a Matriz Total', '% em relação ao Total do Bloco']
+        if is_percentual_geral:
+            bloco_selecionado = None
+            st.selectbox('Selecione o bloco:', ['Todos os blocos'], index=0, disabled=True)
+        else:
+            blocos_disponiveis = df[col_bloco].unique().tolist()
+            bloco_selecionado = st.selectbox('Selecione o bloco:', blocos_disponiveis)
+
+        # Filtrar os dados
+        if is_percentual_geral:
+            # Calcular a média dos percentuais para cada região (ignorando NaN)
+            valores = []
+            regioes = []
+            for col in percentage_cols:
+                media = df[col].dropna().mean()
+                if pd.notnull(media):
+                    valores.append(media)
+                    regioes.append(col[0])
+            titulo_grafico = f'Distribuição {percentual_type.replace("%", "Percentual").replace("em relacao", "em relação").capitalize()} das Regiões'
+        else:
+            linha_bloco = df[df[col_bloco] == bloco_selecionado]
+            valores = []
+            regioes = []
+            for col in percentage_cols:
+                valor = linha_bloco.iloc[0][col] if not linha_bloco.empty else None
+                if pd.notnull(valor):
+                    valores.append(valor)
+                    regioes.append(col[0])
+            titulo_grafico = f'Distribuição {percentual_type.replace("%", "Percentual").replace("em relacao", "em relação").capitalize()} das Regiões - {bloco_selecionado}'
+
+        # Ordenar e plotar
+        dados = sorted(zip(regioes, valores), key=lambda x: x[1], reverse=True)
+        regioes_ord, valores_ord = zip(*dados) if dados else ([],[])
+        if valores_ord:
+            cores = [
+                '#2F473F', '#69C655', '#CC4A23', '#4A90E2', '#F5A623', '#D0021B', '#8B572A', '#B8E986', '#417505', '#BD10E0'
+            ]
+            textpositions = ['inside' if v >= 0.9 else 'outside' for v in valores_ord]
+            y_max = max(valores_ord) * 1.15
+            fig = px.bar(
+                x=regioes_ord,
+                y=valores_ord,
+                text=[f'<b>{v:.2%}</b>' for v in valores_ord],
+                color=regioes_ord,
+                color_discrete_sequence=cores,
+                title=titulo_grafico
+            )
+            fig.update_traces(
+                textposition=textpositions,
+                textfont_size=20,
+                textfont_color='#222',
+                marker_line_color='#fff',
+                marker_line_width=2,
+                hovertemplate='<b>%{x}</b><br>%{y:.2%} do bloco<extra></extra>'
+            )
+            fig.update_layout(
+                font=dict(size=18, color='#2F473F'),
+                legend=dict(font=dict(size=16, color='#2F473F'), bgcolor='#fff'),
+                title_font=dict(size=22, color='#2F473F'),
+                plot_bgcolor='#fff',
+                paper_bgcolor='#fff',
+                xaxis_title='Região',
+                yaxis_title='Percentual (%)',
+                yaxis=dict(tickformat='.0%', color='#2F473F', tickfont=dict(size=16), range=[0, y_max]),
+                xaxis=dict(tickfont=dict(size=16, color='#2F473F'))
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('''
+**Descrição:**  
+O gráfico acima mostra a distribuição percentual de cada região dentro do bloco selecionado. Cada barra representa a porcentagem da pontuação daquela região em relação ao total de pontos do bloco, conforme a coluna "% em relação ao Bloco" da planilha. A soma de todas as regiões exibidas é igual a 100% do bloco.
+''')
+        else:
+            st.info('Não há dados de porcentagem disponíveis para este bloco.')
 
     elif tipo_viz == 'Radar':
         regioes_radar = st.multiselect('Selecione as regiões para o Radar', df_blocos_filt['Região'].unique(), default=df_blocos_filt['Região'].unique())
@@ -410,6 +539,59 @@ if not df_blocos_filt.empty:
             df_blocos_filt['Pontuação no Bloco'].between(*faixa_tab)
         )
         df_tabela = df_blocos_filt[filtro_tab]
+        # Remover a coluna 'Porcentagem no Bloco' se existir
+        if 'Porcentagem no Bloco' in df_tabela.columns:
+            df_tabela = df_tabela.drop(columns=['Porcentagem no Bloco'])
+        # Remover a coluna 'Pontuação no Bloco' se existir
+        if 'Pontuação no Bloco' in df_tabela.columns:
+            df_tabela = df_tabela.drop(columns=['Pontuação no Bloco'])
+        # Ajustar a coluna '% em relação ao Total do Bloco' para exibir como porcentagem
+        if '% em relação ao Total do Bloco' in df_tabela.columns:
+            def formatar_percentual(val):
+                if isinstance(val, list):
+                    return [f'{v*100:.2f}%' if v is not None and not pd.isna(v) else '' for v in val]
+                elif val is not None and not pd.isna(val):
+                    return f'{val*100:.2f}%'
+                else:
+                    return ''
+            df_tabela['% em relação ao Total do Bloco'] = df_tabela['% em relação ao Total do Bloco'].apply(formatar_percentual)
+        # Adicionar coluna de porcentagem de acertos por bloco em relação ao geral
+        if 'Pontuação no Bloco' in df_tabela.columns and 'Pontuação Maxima da Matriz' in df_tabela.columns:
+            df_tabela['Porcentagem de Acertos no Bloco (em relação ao Geral)'] = (
+                df_tabela['Pontuação no Bloco'] / df_tabela['Pontuação Maxima da Matriz'] * 100
+            ).round(2)
+        # Corrigir a coluna '% em relação ao Bloco' para buscar o valor correto de '% em relação ao Total do Bloco' no DataFrame original e renomear a coluna
+        if 'Bloco' in df_tabela.columns and 'Região' in df_tabela.columns and 'Atividades' in df_tabela.columns:
+            valores_percentuais = []
+            for idx, row in df_tabela.iterrows():
+                bloco = row['Bloco']
+                regiao = row['Região']
+                atividades = row['Atividades']
+                percentuais_atividade = []
+                for atividade in atividades:
+                    filtro = (
+                        ((df['Bloco'] == bloco) if 'Bloco' in df.columns else (df[('GERAL', 'Bloco')] == bloco)) &
+                        ((df['Atividade'] == atividade) if 'Atividade' in df.columns else (df[('GERAL', 'Atividade')] == atividade))
+                    )
+                    col_tuple = None
+                    for col in df.columns:
+                        if isinstance(col, tuple):
+                            if col[0] == regiao and col[1].strip().lower() == '% em relação ao total do bloco':
+                                col_tuple = col
+                                break
+                    valor = None
+                    if col_tuple is not None:
+                        linha_df = df[filtro]
+                        if not linha_df.empty:
+                            valor = linha_df.iloc[0][col_tuple]
+                    percentuais_atividade.append(valor)
+                if len(percentuais_atividade) == 1:
+                    valores_percentuais.append(percentuais_atividade[0])
+                else:
+                    valores_percentuais.append(percentuais_atividade)
+            df_tabela['% em relação ao Total do Bloco'] = valores_percentuais
+            if '% em relação ao Bloco' in df_tabela.columns:
+                df_tabela = df_tabela.drop(columns=['Porcentagem no Bloco'])
         # Botão para download do CSV
         csv = df_tabela.to_csv(index=False, sep=';', encoding='utf-8')
         st.download_button(
@@ -454,7 +636,4 @@ if not df_blocos_filt.empty:
             </style>
             """,
             unsafe_allow_html=True
-        )
-
-st.markdown('---')
-st.caption('Cores: 50% #2F473F, 25% #69C655, 15% #CC4A23 | Dashboard desenvolvido para análise comparativa das Ceasas.') 
+        ) 
