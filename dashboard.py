@@ -1,0 +1,460 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from pathlib import Path
+import unicodedata
+
+# Paleta de cores personalizada
+COLOR_PRIMARY = '#2F473F'  # 50%
+COLOR_SECONDARY = '#69C655'  # 25%
+COLOR_ACCENT = '#CC4A23'  # 15%
+COLOR_LIST = [COLOR_PRIMARY, COLOR_SECONDARY, COLOR_ACCENT]
+
+# Função para ler e organizar os dados
+@st.cache_data
+def load_data(path):
+    # Ler o arquivo Excel
+    df = pd.read_excel(path, header=[0,1])  # Usar as duas primeiras linhas como cabeçalho
+    return df
+
+def normalize(s):
+    if not isinstance(s, str):
+        return ''
+    return unicodedata.normalize('NFKD', s).encode('ASCII', 'ignore').decode('ASCII').lower().replace(' ', '')
+
+def get_blocos():
+    return [
+        ('BLOCO 1', 'Estratégia de Coleta e Redistribuição', ['Articulação', 'Triagem e Logística', 'Enriquecimento da captação']),
+        ('BLOCO 2', 'Operação do Banco de Alimentos', ['Estrutura', 'Processos']),
+        ('BLOCO 3', 'Sustentabilidade Financeira', ['Aporte Inicial', 'Custos de Operação']),
+        ('BLOCO 4', 'Sustentabilidade e Prevenção de Descarte', ['Sustentabilidade do Banco de Alimentos', 'Sustentabilidade da Ceasa']),
+        ('BLOCO 5', 'Monitoramento e Gestão', ['Resultados de Eficiência']),
+        ('BLOCO 6', 'Estrutura Física', ['Edificação'])
+    ]
+
+def get_regioes():
+    return ['Belem/PA', 'São Luis/MA', 'CEAGESP/SP', 'Mais Nutrição/CE', 'PRODAL/MG', 'Curitiba/PR', 'GLOBAL']
+
+def find_column(df, region, pattern):
+    """Encontra a coluna que contém a região e o padrão especificado"""
+    normalized_cols = {normalize(col): col for col in df.columns}
+    normalized_region = normalize(region)
+    normalized_pattern = normalize(pattern)
+    
+    matching_cols = [
+        original_col for norm_col, original_col in normalized_cols.items()
+        if normalized_region in norm_col and normalized_pattern in norm_col
+    ]
+    
+    return matching_cols[0] if matching_cols else None
+
+def extrair_dados(df):
+    blocos = get_blocos()
+    regioes = get_regioes()
+    dados = []
+    
+    # Para cada região
+    for reg in regioes:
+        # Encontrar as colunas relevantes para esta região
+        pontuacao_col = (reg, f'{reg} pontuação')
+        bloco_col = (reg, 'Pontuação no Bloco ')
+        
+        # Para cada bloco
+        for bloco_idx, (bloco_nome, bloco_titulo, atividades) in enumerate(blocos):
+            try:
+                # Calcular os índices das linhas para este bloco
+                inicio = sum(len(b[2]) for b in blocos[:bloco_idx])  # Soma das atividades dos blocos anteriores
+                fim = inicio + len(atividades)
+                
+                # Extrair pontuações das atividades
+                pontuacoes = df.loc[inicio:fim-1, pontuacao_col].astype(float).values
+                
+                # Extrair pontuação do bloco (primeira linha do bloco)
+                pontuacao_bloco = float(df.loc[inicio, bloco_col])
+                
+                dados.append({
+                    'Região': reg,
+                    'Bloco': bloco_nome,
+                    'Título': bloco_titulo,
+                    'Pontuação no Bloco': pontuacao_bloco,
+                    'Atividades': atividades,
+                    'Pontuações': pontuacoes.tolist()
+                })
+            except Exception as e:
+                st.warning(f"Erro ao processar {reg} - {bloco_nome}: {str(e)}")
+                continue
+    
+    if not dados:
+        st.error("Nenhum dado foi extraído da planilha. Verifique o formato dos dados.")
+        return pd.DataFrame()
+    
+    return pd.DataFrame(dados)
+
+def get_destaques(df_blocos):
+    if df_blocos.empty:
+        return {}
+    
+    destaques = {}
+    for bloco in df_blocos['Bloco'].unique():
+        bloco_df = df_blocos[df_blocos['Bloco'] == bloco]
+        max_idx = bloco_df['Pontuação no Bloco'].idxmax()
+        min_idx = bloco_df['Pontuação no Bloco'].idxmin()
+        destaques[bloco] = {
+            'maior': (bloco_df.loc[max_idx, 'Região'], bloco_df.loc[max_idx, 'Pontuação no Bloco']),
+            'menor': (bloco_df.loc[min_idx, 'Região'], bloco_df.loc[min_idx, 'Pontuação no Bloco'])
+        }
+    return destaques
+
+# Forçar tema claro do Streamlit
+st.set_page_config(page_title='Dashboard Matriz Avaliativa', layout='wide', page_icon='📊')
+st.markdown(
+    """
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&family=Yrsa:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+    :root {
+      --font-primary: 'Poppins', sans-serif;
+      --font-secondary: 'Yrsa', serif;
+      --color-secondary: #69C655;
+    }
+    html, body, .stApp, [data-testid="stSidebar"], .css-1d391kg, .css-1v0mbdj, .css-1cpxqw2 {
+        background-color: #fff !important;
+        color: #222 !important;
+        font-family: var(--font-primary) !important;
+    }
+    * {
+        font-family: var(--font-primary) !important;
+    }
+    /* Header/topo branco e sem sombra */
+    header, .st-emotion-cache-18ni7ap, .st-emotion-cache-1avcm0n, .st-emotion-cache-6qob1r {
+        background: #fff !important;
+        box-shadow: none !important;
+        color: #2F473F !important;
+    }
+    header * {
+        color: #2F473F !important;
+    }
+    /* Sidebar: título Filtros */
+    section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3, section[data-testid="stSidebar"] h4 {
+        font-size: 2em !important;
+        color: #2F473F !important;
+        font-weight: 800 !important;
+        margin-bottom: 18px !important;
+        font-family: var(--font-primary) !important;
+    }
+    /* Sidebar: títulos dos expanders */
+    section[data-testid="stSidebar"] .st-expander > summary {
+        font-size: 1.18em !important;
+        color: #2F473F !important;
+        font-weight: 700 !important;
+        margin-bottom: 6px !important;
+        font-family: var(--font-primary) !important;
+    }
+    /* Sidebar: radio buttons */
+    section[data-testid="stSidebar"] .stRadio label, section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label, section[data-testid="stSidebar"] .stRadio span, section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > div,
+    section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] span, section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label span, section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label div {
+        color: #2F473F !important;
+        font-weight: 600 !important;
+        font-size: 1em !important;
+        opacity: 1 !important;
+        font-family: var(--font-primary) !important;
+    }
+    section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
+        opacity: 1 !important;
+    }
+    /* Espaçamento extra entre seções da sidebar */
+    section[data-testid="stSidebar"] .st-expander, section[data-testid="stSidebar"] .stRadio {
+        margin-bottom: 18px !important;
+    }
+    /* Filtros: cards */
+    .stMultiSelect, .stSelectbox, .stSlider, .stTextInput, .stNumberInput, .st-bw, .st-c3 {
+        background-color: #2F473F !important;
+        border-radius: 12px !important;
+        box-shadow: 0 2px 8px rgba(47,71,63,0.08);
+        color: #fff !important;
+        border: 1.5px solid #2F473F !important;
+        margin-bottom: 12px !important;
+        padding: 6px 8px !important;
+        font-family: var(--font-primary) !important;
+    }
+    /* Radio button: garantir texto visível */
+    .stRadio label, .stRadio div[role="radiogroup"] > label, .stRadio span, .stRadio div[role="radiogroup"] > div,
+    .stRadio div[role="radiogroup"] span, .stRadio div[role="radiogroup"] label span, .stRadio div[role="radiogroup"] label div {
+        color: #2F473F !important;
+        font-weight: 600 !important;
+        font-size: 1.08em !important;
+        opacity: 1 !important;
+        font-family: var(--font-primary) !important;
+    }
+    .stRadio div[role="radiogroup"] label {
+        opacity: 1 !important;
+    }
+    /* Chips/tags das opções selecionadas */
+    .stMultiSelect .css-1r6slb0, .stMultiSelect .css-12jo7m5 {
+        background-color: #69C655 !important;
+        color: #222 !important;
+        border-radius: 8px !important;
+        margin: 2px 4px !important;
+        font-weight: 600;
+        font-size: 1em;
+        border: 1.5px solid #69C655 !important;
+        box-shadow: 0 1px 4px rgba(105,198,85,0.10);
+        font-family: var(--font-primary) !important;
+    }
+    /* Botão X das tags ao passar o mouse */
+    .stMultiSelect .css-xb97g8:hover, .stMultiSelect .css-1wa3eu0 .css-xb97g8:hover {
+        background-color: #CC4A23 !important;
+        color: #fff !important;
+        border-radius: 50% !important;
+    }
+    /* Títulos dos filtros */
+    .stMarkdown h4, .stMarkdown h5, .stMarkdown h6, .stMarkdown h3, .stMarkdown h2, .stMarkdown h1 {
+        color: #2F473F !important;
+        font-weight: 700;
+        margin-bottom: 8px;
+        font-family: var(--font-primary) !important;
+    }
+    /* Ajuste para o container dos filtros na área principal */
+    .block-container > div > .stMarkdown, .block-container > div > .stMultiSelect, .block-container > div > .stSelectbox, .block-container > div > .stSlider {
+        margin-bottom: 18px !important;
+    }
+    /* Fonte secundária para elementos específicos (exemplo de uso) */
+    .fonte-secundaria {
+        font-family: var(--font-secondary) !important;
+    }
+    /* Botão de download customizado */
+    .stDownloadButton button {
+        background-color: var(--color-secondary) !important;
+        color: #111 !important;
+        font-weight: 700 !important;
+        font-size: 1.08em !important;
+        border-radius: 12px !important;
+        border: none !important;
+        padding: 10px 24px !important;
+        box-shadow: 0 2px 8px rgba(105,198,85,0.10);
+        margin-bottom: 18px !important;
+        font-family: var(--font-primary) !important;
+    }
+    .stDownloadButton button:hover {
+        background-color: #57a94d !important;
+        color: #fff !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# Logo no topo
+st.image('1.png', width=200)
+
+st.title('Dashboard Matriz Avaliativa das Ceasas')
+
+# Legenda dos Blocos
+with st.expander('Legenda dos Blocos', expanded=False):
+    st.markdown("""
+    <div style='font-size:1.3em; font-weight:bold; margin-bottom: 0.7em; color:#222;'>Legenda dos Blocos</div>
+    <div style='line-height:1.6; color:#222;'>
+    <div style='margin-bottom: 1.2em;'><span style='font-size:1.1em; font-weight:bold;'>BLOCO 1:</span> Estratégia de Coleta e Redistribuição<br><span style='color:#69C655; font-size:1em;'>Atividades:</span> Articulação, Triagem e Logística, Enriquecimento da captação</div>
+    <div style='margin-bottom: 1.2em;'><span style='font-size:1.1em; font-weight:bold;'>BLOCO 2:</span> Operação do Banco de Alimentos<br><span style='color:#69C655; font-size:1em;'>Atividades:</span> Estrutura, Processos</div>
+    <div style='margin-bottom: 1.2em;'><span style='font-size:1.1em; font-weight:bold;'>BLOCO 3:</span> Sustentabilidade Financeira<br><span style='color:#69C655; font-size:1em;'>Atividades:</span> Aporte Inicial, Custos de Operação</div>
+    <div style='margin-bottom: 1.2em;'><span style='font-size:1.1em; font-weight:bold;'>BLOCO 4:</span> Sustentabilidade e Prevenção de Descarte<br><span style='color:#69C655; font-size:1em;'>Atividades:</span> Sustentabilidade do Banco de Alimentos, Sustentabilidade da Ceasa</div>
+    <div style='margin-bottom: 1.2em;'><span style='font-size:1.1em; font-weight:bold;'>BLOCO 5:</span> Monitoramento e Gestão<br><span style='color:#69C655; font-size:1em;'>Atividades:</span> Resultados de Eficiência</div>
+    <div style='margin-bottom: 0.5em;'><span style='font-size:1.1em; font-weight:bold;'>BLOCO 6:</span> Estrutura Física<br><span style='color:#69C655; font-size:1em;'>Atividades:</span> Edificação</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Upload ou uso do arquivo local
+file_path = 'Matriz_Avaliativa_Ceasas.xlsx'
+if not Path(file_path).exists():
+    file_path = st.file_uploader('Envie a planilha Excel', type=['xlsx'])
+    if not file_path:
+        st.stop()
+
+# Carregar dados
+df = load_data(file_path)
+
+# Extrair dados processados
+df_blocos = extrair_dados(df)
+
+if df_blocos.empty:
+    st.stop()
+
+# Calcular destaques
+destaques = get_destaques(df_blocos)
+
+# Filtros
+st.sidebar.header('Filtros')
+with st.sidebar.expander('Selecione as regiões', expanded=False):
+    regioes_sel = st.multiselect('', df_blocos['Região'].unique(), default=df_blocos['Região'].unique(), key='regioes_sidebar')
+with st.sidebar.expander('Selecione os blocos', expanded=False):
+    blocos_sel = st.multiselect('', df_blocos['Bloco'].unique(), default=df_blocos['Bloco'].unique(), key='blocos_sidebar')
+with st.sidebar.expander('Selecione as atividades (exibe blocos que contêm)', expanded=False):
+    atividades_unicas = sorted(set(sum(df_blocos['Atividades'].tolist(), [])))
+    atividades_sel = st.multiselect('', atividades_unicas, default=atividades_unicas, key='atividades_sidebar')
+pontuacao_min = float(df_blocos['Pontuação no Bloco'].min())
+pontuacao_max = float(df_blocos['Pontuação no Bloco'].max())
+with st.sidebar.expander('Faixa de pontuação do bloco', expanded=False):
+    faixa_pontuacao = st.slider('', min_value=pontuacao_min, max_value=pontuacao_max, value=(pontuacao_min, pontuacao_max), key='faixa_sidebar')
+
+# Seletor de tipo de visualização
+tipo_viz = st.sidebar.radio('Tipo de visualização', ['Gráfico de Barras', 'Radar', 'Tabela'])
+
+def bloco_contem_atividade(row):
+    return any(a in atividades_sel for a in row['Atividades'])
+
+# Filtragem
+filtro = (
+    df_blocos['Região'].isin(regioes_sel) &
+    df_blocos['Bloco'].isin(blocos_sel) &
+    df_blocos.apply(bloco_contem_atividade, axis=1) &
+    df_blocos['Pontuação no Bloco'].between(*faixa_pontuacao)
+)
+df_blocos_filt = df_blocos[filtro]
+
+# Ordenar do maior para o menor
+if not df_blocos_filt.empty:
+    df_blocos_filt = df_blocos_filt.sort_values('Pontuação no Bloco', ascending=False)
+
+# Destaques gerais
+if destaques and not df_blocos_filt.empty:
+    # Ordenar blocos pelo maior destaque (pontuação) de forma decrescente
+    blocos_ordenados = [bloco for bloco in blocos_sel if bloco in destaques]
+    destaques_html = "<div style='display: flex; flex-direction: row; justify-content: flex-start; align-items: flex-start; gap: 36px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px;'>"
+    for idx, bloco in enumerate(blocos_ordenados, 1):
+        destaques_html += (
+            f"<div style='min-width: 160px; margin-bottom:0px;'><span style='font-size:1em; font-weight:bold;'>{idx}. {bloco}</span><br>"
+            f"<span style='font-size:1.05em;'>{destaques[bloco]['maior'][0]}: {destaques[bloco]['maior'][1]:.1f}</span><br>"
+            f"<span style='font-size:0.9em;'>Menor: {destaques[bloco]['menor'][0]} ({destaques[bloco]['menor'][1]:.1f})</span></div>"
+        )
+    destaques_html += "</div>"
+    st.markdown(
+        f"""
+        <div style='background:#2F473F; color:#fff; border-radius:10px; padding: 24px 24px 12px 24px; margin-bottom: 24px;'>
+        <div style='font-size:1.3em; font-weight:bold; margin-bottom: 18px;'>Destaques por Bloco</div>
+        {destaques_html}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# Visualização
+if not df_blocos_filt.empty:
+    if tipo_viz == 'Gráfico de Barras':
+        fig = px.bar(
+            df_blocos_filt,
+            x='Bloco',
+            y='Pontuação no Bloco',
+            color='Região',
+            barmode='group',
+            color_discrete_sequence=COLOR_LIST*3,
+            text='Pontuação no Bloco',
+            title='Pontuação por Bloco e Região'
+        )
+        fig.update_traces(textfont_size=18, textfont_color='#2F473F')
+        fig.update_layout(
+            font=dict(size=18, color='#2F473F'),
+            legend=dict(font=dict(size=16, color='#2F473F'), bgcolor='#fff'),
+            xaxis_title_font=dict(size=18, color='#2F473F'),
+            yaxis_title_font=dict(size=18, color='#2F473F'),
+            title_font=dict(size=22, color='#2F473F'),
+            plot_bgcolor='#fff',
+            paper_bgcolor='#fff',
+            xaxis=dict(color='#2F473F', tickfont=dict(color='#2F473F')),
+            yaxis=dict(color='#2F473F', tickfont=dict(color='#2F473F'))
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    elif tipo_viz == 'Radar':
+        regioes_radar = st.multiselect('Selecione as regiões para o Radar', df_blocos_filt['Região'].unique(), default=df_blocos_filt['Região'].unique())
+        fig = go.Figure()
+        for i, reg in enumerate(regioes_radar):
+            dados = df_blocos_filt[df_blocos_filt['Região'] == reg]
+            fig.add_trace(go.Scatterpolar(
+                r=dados['Pontuação no Bloco'],
+                theta=dados['Bloco'],
+                fill='toself',
+                name=reg,
+                line_color=COLOR_LIST[i % len(COLOR_LIST)],
+                text=dados['Pontuação no Bloco'],
+                textfont=dict(size=18, color='#2F473F')
+            ))
+        fig.update_layout(
+            polar=dict(radialaxis=dict(visible=True, tickfont=dict(size=16, color='#2F473F'), gridcolor='#ccc', linecolor='#2F473F', showline=True)),
+            showlegend=True,
+            legend=dict(font=dict(size=16, color='#2F473F'), bgcolor='#fff'),
+            title='Perfil dos Blocos por Região',
+            font=dict(size=18, color='#2F473F'),
+            title_font=dict(size=22, color='#2F473F'),
+            plot_bgcolor='#fff',
+            paper_bgcolor='#fff'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    elif tipo_viz == 'Tabela':
+        # Filtros específicos para a tabela
+        st.markdown('#### Filtros da Tabela')
+        with st.expander('Filtrar por Região', expanded=False):
+            regioes_tab = st.multiselect('', df_blocos_filt['Região'].unique(), default=df_blocos_filt['Região'].unique(), key='regiao_tab')
+        with st.expander('Filtrar por Bloco', expanded=False):
+            blocos_tab = st.multiselect('', df_blocos_filt['Bloco'].unique(), default=df_blocos_filt['Bloco'].unique(), key='bloco_tab')
+        with st.expander('Filtrar por Atividade', expanded=False):
+            atividades_tab = st.multiselect('', sorted(set(sum(df_blocos_filt['Atividades'].tolist(), []))), default=sorted(set(sum(df_blocos_filt['Atividades'].tolist(), []))), key='atividade_tab')
+        with st.expander('Filtrar por Faixa de Pontuação', expanded=False):
+            faixa_tab = st.slider('', float(df_blocos_filt['Pontuação no Bloco'].min()), float(df_blocos_filt['Pontuação no Bloco'].max()), (float(df_blocos_filt['Pontuação no Bloco'].min()), float(df_blocos_filt['Pontuação no Bloco'].max())), key='faixa_tab')
+        def bloco_contem_atividade_tab(row):
+            return any(a in atividades_tab for a in row['Atividades'])
+        filtro_tab = (
+            df_blocos_filt['Região'].isin(regioes_tab) &
+            df_blocos_filt['Bloco'].isin(blocos_tab) &
+            df_blocos_filt.apply(bloco_contem_atividade_tab, axis=1) &
+            df_blocos_filt['Pontuação no Bloco'].between(*faixa_tab)
+        )
+        df_tabela = df_blocos_filt[filtro_tab]
+        # Botão para download do CSV
+        csv = df_tabela.to_csv(index=False, sep=';', encoding='utf-8')
+        st.download_button(
+            label='Baixar tabela filtrada em CSV',
+            data=csv,
+            file_name='tabela_filtrada.csv',
+            mime='text/csv',
+            help='Baixe a tabela exatamente como está filtrada na tela.'
+        )
+        st.markdown(
+            df_tabela.to_html(
+                index=False,
+                escape=False,
+                border=0,
+                classes='tabela-branca',
+                justify='center'
+            ),
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            """
+            <style>
+            .tabela-branca {
+                background: #fff !important;
+                color: #222 !important;
+                border-radius: 10px;
+                border-collapse: separate;
+                border-spacing: 0;
+                width: 100%;
+                font-size: 1.05em;
+            }
+            .tabela-branca th, .tabela-branca td {
+                background: #fff !important;
+                color: #222 !important;
+                padding: 8px 10px;
+                border: 1px solid #e0e0e0;
+            }
+            .tabela-branca th {
+                font-weight: bold;
+                background: #f5f5f5 !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
+st.markdown('---')
+st.caption('Cores: 50% #2F473F, 25% #69C655, 15% #CC4A23 | Dashboard desenvolvido para análise comparativa das Ceasas.') 
