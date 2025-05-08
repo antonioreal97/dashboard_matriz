@@ -304,7 +304,7 @@ destaques = get_destaques(df_blocos)
 
 # Filtros
 st.sidebar.header('Filtros')
-with st.sidebar.expander('Selecione as regiões', expanded=False):
+with st.sidebar.expander('Selecione os Ceasas', expanded=False):
     regioes_sel = st.multiselect('', df_blocos['Região'].unique(), default=df_blocos['Região'].unique(), key='regioes_sidebar')
 with st.sidebar.expander('Selecione os blocos', expanded=False):
     blocos_sel = st.multiselect('', df_blocos['Bloco'].unique(), default=df_blocos['Bloco'].unique(), key='blocos_sidebar')
@@ -370,13 +370,13 @@ if not df_blocos_filt.empty:
                 'GLOBAL': '#4A90E2',
                 'Belem/PA': '#2F473F',
                 'São Luis/MA': '#69C655',
-                'Mais Nutrição/CE': '#CC4A23',
-                'PRODAL/MG': '#F5A623',
-                'Curitiba/PR': '#D0021B',
-                'CEAGESP/SP': '#8B572A',
+                'Mais Nutrição/CE': '#A3D9A5',
+                'PRODAL/MG': '#4CAF50',
+                'Curitiba/PR': '#81C784',
+                'CEAGESP/SP': '#388E3C',
             },
             text='Pontuação no Bloco',
-            title='Pontuação por Bloco e Região'
+            title='Pontuação por Bloco do Ceasa'
         )
         fig.update_traces(textfont_size=18, textfont_color='#2F473F')
         fig.update_layout(
@@ -437,7 +437,7 @@ if not df_blocos_filt.empty:
                 if pd.notnull(media):
                     valores.append(media)
                     regioes.append(col[0])
-            titulo_grafico = f'Distribuição {percentual_type.replace("%", "Percentual").replace("em relacao", "em relação").capitalize()} das Regiões'
+            titulo_grafico = f'Distribuição {percentual_type.replace("%", "Percentual").replace("em relacao", "em relação").capitalize()} dos Ceasas'
         else:
             linha_bloco = df[df[col_bloco] == bloco_selecionado]
             valores = []
@@ -447,15 +447,21 @@ if not df_blocos_filt.empty:
                 if pd.notnull(valor):
                     valores.append(valor)
                     regioes.append(col[0])
-            titulo_grafico = f'Distribuição {percentual_type.replace("%", "Percentual").replace("em relacao", "em relação").capitalize()} das Regiões - {bloco_selecionado}'
+            titulo_grafico = f'Distribuição {percentual_type.replace("%", "Percentual").replace("em relacao", "em relação").capitalize()} dos Ceasas - {bloco_selecionado}'
 
         # Ordenar e plotar
         dados = sorted(zip(regioes, valores), key=lambda x: x[1], reverse=True)
         regioes_ord, valores_ord = zip(*dados) if dados else ([],[])
         if valores_ord:
-            cores = [
-                '#2F473F', '#69C655', '#CC4A23', '#4A90E2', '#F5A623', '#D0021B', '#8B572A', '#B8E986', '#417505', '#BD10E0'
-            ]
+            color_discrete_map = {
+                'GLOBAL': '#4A90E2',
+                'Belem/PA': '#2F473F',
+                'São Luis/MA': '#69C655',
+                'Mais Nutrição/CE': '#A3D9A5',
+                'PRODAL/MG': '#4CAF50',
+                'Curitiba/PR': '#81C784',
+                'CEAGESP/SP': '#388E3C',
+            }
             textpositions = ['inside' if v >= 0.9 else 'outside' for v in valores_ord]
             y_max = max(valores_ord) * 1.15
             fig = px.bar(
@@ -463,7 +469,7 @@ if not df_blocos_filt.empty:
                 y=valores_ord,
                 text=[f'<b>{v:.2%}</b>' for v in valores_ord],
                 color=regioes_ord,
-                color_discrete_sequence=cores,
+                color_discrete_map=color_discrete_map,
                 title=titulo_grafico
             )
             fig.update_traces(
@@ -486,24 +492,30 @@ if not df_blocos_filt.empty:
                 xaxis=dict(tickfont=dict(size=16, color='#2F473F'))
             )
             st.plotly_chart(fig, use_container_width=True)
-            st.markdown('''
-**Descrição:**  
-O gráfico acima mostra a distribuição percentual de cada região dentro do bloco selecionado. Cada barra representa a porcentagem da pontuação daquela região em relação ao total de pontos do bloco, conforme a coluna "% em relação ao Bloco" da planilha. A soma de todas as regiões exibidas é igual a 100% do bloco.
-''')
         else:
             st.info('Não há dados de porcentagem disponíveis para este bloco.')
 
     elif tipo_viz == 'Radar':
-        regioes_radar = st.multiselect('Selecione as regiões para o Radar', df_blocos_filt['Região'].unique(), default=df_blocos_filt['Região'].unique())
+        regioes_radar = st.multiselect('Selecione os Ceasas para o Radar', df_blocos_filt['Região'].unique(), default=df_blocos_filt['Região'].unique())
         fig = go.Figure()
+        color_discrete_map = {
+            'GLOBAL': '#4A90E2',
+            'Belem/PA': '#2F473F',
+            'São Luis/MA': '#69C655',
+            'Mais Nutrição/CE': '#A3D9A5',
+            'PRODAL/MG': '#4CAF50',
+            'Curitiba/PR': '#81C784',
+            'CEAGESP/SP': '#388E3C',
+        }
         for i, reg in enumerate(regioes_radar):
             dados = df_blocos_filt[df_blocos_filt['Região'] == reg]
+            cor = color_discrete_map.get(reg, '#2F473F')
             fig.add_trace(go.Scatterpolar(
                 r=dados['Pontuação no Bloco'],
                 theta=dados['Bloco'],
                 fill='toself',
                 name=reg,
-                line_color=COLOR_LIST[i % len(COLOR_LIST)],
+                line_color=cor,
                 text=dados['Pontuação no Bloco'],
                 textfont=dict(size=18, color='#2F473F')
             ))
@@ -511,7 +523,7 @@ O gráfico acima mostra a distribuição percentual de cada região dentro do bl
             polar=dict(radialaxis=dict(visible=True, tickfont=dict(size=16, color='#2F473F'), gridcolor='#ccc', linecolor='#2F473F', showline=True)),
             showlegend=True,
             legend=dict(font=dict(size=16, color='#2F473F'), bgcolor='#fff'),
-            title='Perfil dos Blocos por Região',
+            title='Perfil dos Blocos por Ceasa',
             font=dict(size=18, color='#2F473F'),
             title_font=dict(size=22, color='#2F473F'),
             plot_bgcolor='#fff',
@@ -522,7 +534,7 @@ O gráfico acima mostra a distribuição percentual de cada região dentro do bl
     elif tipo_viz == 'Tabela':
         # Filtros específicos para a tabela
         st.markdown('#### Filtros da Tabela')
-        with st.expander('Filtrar por Região', expanded=False):
+        with st.expander('Filtrar por Ceasa', expanded=False):
             regioes_tab = st.multiselect('', df_blocos_filt['Região'].unique(), default=df_blocos_filt['Região'].unique(), key='regiao_tab')
         with st.expander('Filtrar por Bloco', expanded=False):
             blocos_tab = st.multiselect('', df_blocos_filt['Bloco'].unique(), default=df_blocos_filt['Bloco'].unique(), key='bloco_tab')
