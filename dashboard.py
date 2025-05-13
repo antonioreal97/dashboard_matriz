@@ -6,6 +6,28 @@ from pathlib import Path
 import unicodedata
 import re
 
+# Função de senha precisa ser definida antes de ser chamada
+
+def check_password():
+    def password_entered():
+        if st.session_state["password"] == "PCF2025":
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Remove a senha da sessão por segurança
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        st.text_input("Digite a senha para acessar o dashboard:", type="password", on_change=password_entered, key="password")
+        st.stop()
+    elif not st.session_state["password_correct"]:
+        st.text_input("Digite a senha para acessar o dashboard:", type="password", on_change=password_entered, key="password")
+        st.error("Senha incorreta. Tente novamente.")
+        st.stop()
+    else:
+        return True
+
+check_password()
+
 # Paleta de cores personalizada
 COLOR_PRIMARY = '#2F473F'  # 50%
 COLOR_SECONDARY = '#69C655'  # 25%
@@ -360,6 +382,8 @@ if tipo_viz == 'Gráfico de Barras' and destaques and not df_blocos_filt.empty:
 # Visualização
 if not df_blocos_filt.empty:
     if tipo_viz == 'Gráfico de Barras':
+        # Definir ordem dos blocos
+        ordem_blocos = ['BLOCO 1', 'BLOCO 2', 'BLOCO 3', 'BLOCO 4', 'BLOCO 5', 'BLOCO 6']
         fig = px.bar(
             df_blocos_filt,
             x='Bloco',
@@ -376,7 +400,8 @@ if not df_blocos_filt.empty:
                 'CEAGESP/SP': '#388E3C',
             },
             text='Pontuação no Bloco',
-            title='Pontuação por Bloco do Ceasa'
+            title='Pontuação por Bloco do Ceasa',
+            category_orders={'Bloco': ordem_blocos}
         )
         fig.update_traces(textfont_size=18, textfont_color='#2F473F')
         fig.update_layout(
@@ -507,23 +532,51 @@ if not df_blocos_filt.empty:
             'Curitiba/PR': '#81C784',
             'CEAGESP/SP': '#388E3C',
         }
+        # Obter pontuação máxima de cada bloco do gabarito geral
+        # Supondo que o arquivo Excel tem MultiIndex e a linha do gabarito geral é única por bloco
+        # Vamos buscar no DataFrame original (df) a pontuação máxima de cada bloco
+        pontuacao_maxima_blocos = {}
+        if ('GERAL', 'Bloco') in df.columns and ('GERAL', 'Pontuação Maxima por Bloco') in df.columns:
+            for idx, row in df.iterrows():
+                bloco = row[('GERAL', 'Bloco')]
+                pontuacao_max = row[('GERAL', 'Pontuação Maxima por Bloco')]
+                if pd.notnull(bloco) and pd.notnull(pontuacao_max):
+                    pontuacao_maxima_blocos[bloco] = pontuacao_max
+        else:
+            # Alternativa: tentar buscar do df_blocos se não achar no df
+            for bloco in df_blocos_filt['Bloco'].unique():
+                pontuacao_max = df_blocos_filt[df_blocos_filt['Bloco'] == bloco]['Pontuação no Bloco'].max()
+                pontuacao_maxima_blocos[bloco] = pontuacao_max
         for i, reg in enumerate(regioes_radar):
             dados = df_blocos_filt[df_blocos_filt['Região'] == reg]
             cor = color_discrete_map.get(reg, '#2F473F')
+            # Calcular percentual de acertos por bloco
+            percentuais = []
+            blocos = []
+            for idx, row in dados.iterrows():
+                bloco = row['Bloco']
+                pontuacao = row['Pontuação no Bloco']
+                pontuacao_max = pontuacao_maxima_blocos.get(bloco, None)
+                if pontuacao_max and pontuacao_max > 0:
+                    percentual = pontuacao / pontuacao_max * 100
+                else:
+                    percentual = 0
+                percentuais.append(percentual)
+                blocos.append(bloco)
             fig.add_trace(go.Scatterpolar(
-                r=dados['Pontuação no Bloco'],
-                theta=dados['Bloco'],
+                r=percentuais,
+                theta=blocos,
                 fill='toself',
                 name=reg,
                 line_color=cor,
-                text=dados['Pontuação no Bloco'],
+                text=[f'{p:.1f}%' for p in percentuais],
                 textfont=dict(size=18, color='#2F473F')
             ))
         fig.update_layout(
-            polar=dict(radialaxis=dict(visible=True, tickfont=dict(size=16, color='#2F473F'), gridcolor='#ccc', linecolor='#2F473F', showline=True)),
+            polar=dict(radialaxis=dict(visible=True, tickfont=dict(size=16, color='#2F473F'), gridcolor='#ccc', linecolor='#2F473F', showline=True, range=[0, 100], tickformat='.0f', title='Percentual (%)')),
             showlegend=True,
             legend=dict(font=dict(size=16, color='#2F473F'), bgcolor='#fff'),
-            title='Perfil dos Blocos por Ceasa',
+            title='Perfil dos Blocos por Ceasa (Percentual de Acertos)',
             font=dict(size=18, color='#2F473F'),
             title_font=dict(size=22, color='#2F473F'),
             plot_bgcolor='#fff',
